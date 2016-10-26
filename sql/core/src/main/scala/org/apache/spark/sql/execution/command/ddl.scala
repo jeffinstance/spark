@@ -183,17 +183,20 @@ case class DropTableCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val catalog = sparkSession.sessionState.catalog
-    // If the command DROP VIEW is to drop a table or DROP TABLE is to drop a view
-    // issue an exception.
-    catalog.getTableMetadataOption(tableName).map(_.tableType match {
-      case CatalogTableType.VIEW if !isView =>
-        throw new AnalysisException(
-          "Cannot drop a view with DROP TABLE. Please use DROP VIEW instead")
-      case o if o != CatalogTableType.VIEW && isView =>
-        throw new AnalysisException(
-          s"Cannot drop a table with DROP VIEW. Please use DROP TABLE instead")
-      case _ =>
-    })
+
+    if (!catalog.isTemporaryTable(tableName) && catalog.tableExists(tableName)) {
+      // If the command DROP VIEW is to drop a table or DROP TABLE is to drop a view
+      // issue an exception.
+      catalog.getTableMetadata(tableName).tableType match {
+        case CatalogTableType.VIEW if !isView =>
+          throw new AnalysisException(
+            "Cannot drop a view with DROP TABLE. Please use DROP VIEW instead")
+        case o if o != CatalogTableType.VIEW && isView =>
+          throw new AnalysisException(
+            s"Cannot drop a table with DROP VIEW. Please use DROP TABLE instead")
+        case _ =>
+      }
+    }
     try {
       sparkSession.sharedState.cacheManager.uncacheQuery(
         sparkSession.table(tableName.quotedString))
@@ -348,8 +351,13 @@ case class AlterTableAddPartitionCommand(
         "ALTER TABLE ADD PARTITION is not allowed for tables defined using the datasource API")
     }
     val parts = partitionSpecsAndLocs.map { case (spec, location) =>
+      val normalizedSpec = PartitioningUtils.normalizePartitionSpec(
+        spec,
+        table.partitionColumnNames,
+        table.identifier.quotedString,
+        sparkSession.sessionState.conf.resolver)
       // inherit table storage format (possibly except for location)
-      CatalogTablePartition(spec, table.storage.copy(locationUri = location))
+      CatalogTablePartition(normalizedSpec, table.storage.copy(locationUri = location))
     }
     catalog.createPartitions(table.identifier, parts, ignoreIfExists = ifNotExists)
     Seq.empty[Row]
@@ -379,8 +387,21 @@ case class AlterTableRenamePartitionCommand(
         "ALTER TABLE RENAME PARTITION is not allowed for tables defined using the datasource API")
     }
     DDLUtils.verifyAlterTableType(catalog, table, isView = false)
+
+    val normalizedOldPartition = PartitioningUtils.normalizePartitionSpec(
+      oldPartition,
+      table.partitionColumnNames,
+      table.identifier.quotedString,
+      sparkSession.sessionState.conf.resolver)
+
+    val normalizedNewPartition = PartitioningUtils.normalizePartitionSpec(
+      newPartition,
+      table.partitionColumnNames,
+      table.identifier.quotedString,
+      sparkSession.sessionState.conf.resolver)
+
     catalog.renamePartitions(
-      tableName, Seq(oldPartition), Seq(newPartition))
+      tableName, Seq(normalizedOldPartition), Seq(normalizedNewPartition))
     Seq.empty[Row]
   }
 
@@ -415,7 +436,17 @@ case class AlterTableDropPartitionCommand(
       throw new AnalysisException(
         "ALTER TABLE DROP PARTITIONS is not allowed for tables defined using the datasource API")
     }
-    catalog.dropPartitions(table.identifier, specs, ignoreIfNotExists = ifExists, purge = purge)
+
+    val normalizedSpecs = specs.map { spec =>
+      PartitioningUtils.normalizePartitionSpec(
+        spec,
+        table.partitionColumnNames,
+        table.identifier.quotedString,
+        sparkSession.sessionState.conf.resolver)
+    }
+
+    catalog.dropPartitions(
+      table.identifier, normalizedSpecs, ignoreIfNotExists = ifExists, purge = purge)
     Seq.empty[Row]
   }
 

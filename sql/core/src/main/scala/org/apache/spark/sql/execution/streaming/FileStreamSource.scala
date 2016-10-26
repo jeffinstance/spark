@@ -35,6 +35,7 @@ class FileStreamSource(
     path: String,
     fileFormatClassName: String,
     override val schema: StructType,
+    partitionColumns: Seq[String],
     metadataPath: String,
     options: Map[String, String]) extends Source with Logging {
 
@@ -46,6 +47,13 @@ class FileStreamSource(
     val fs = new Path(path).getFileSystem(sparkSession.sessionState.newHadoopConf())
     fs.makeQualified(new Path(path))  // can contains glob patterns
   }
+
+  private val optionsWithPartitionBasePath = sourceOptions.optionMapWithoutPath ++ {
+    if (!SparkHadoopUtil.get.isGlobPath(new Path(path)) && options.contains("path")) {
+      Map("basePath" -> path)
+    } else {
+      Map()
+    }}
 
   private val metadataLog =
     new FileStreamSourceLog(FileStreamSourceLog.VERSION, sparkSession, metadataPath)
@@ -135,8 +143,9 @@ class FileStreamSource(
         sparkSession,
         paths = files.map(_.path),
         userSpecifiedSchema = Some(schema),
+        partitionColumns = partitionColumns,
         className = fileFormatClassName,
-        options = sourceOptions.optionMapWithoutPath)
+        options = optionsWithPartitionBasePath)
     Dataset.ofRows(sparkSession, LogicalRelation(newDataSource.resolveRelation(
       checkFilesExist = false)))
   }

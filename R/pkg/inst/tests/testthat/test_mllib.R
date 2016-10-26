@@ -410,6 +410,21 @@ test_that("spark.mlp", {
   model <- spark.mlp(df, layers = c(4, 5, 4, 3), maxIter = 10, seed = 10)
   mlpPredictions <- collect(select(predict(model, mlpTestDF), "prediction"))
   expect_equal(head(mlpPredictions$prediction, 12), c(1, 1, 1, 1, 2, 1, 2, 2, 1, 0, 0, 1))
+
+  # test initialWeights
+  model <- spark.mlp(df, layers = c(4, 3), maxIter = 2, initialWeights =
+    c(0, 0, 0, 0, 0, 5, 5, 5, 5, 5, 9, 9, 9, 9, 9))
+  mlpPredictions <- collect(select(predict(model, mlpTestDF), "prediction"))
+  expect_equal(head(mlpPredictions$prediction, 12), c(1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1))
+
+  model <- spark.mlp(df, layers = c(4, 3), maxIter = 2, initialWeights =
+    c(0.0, 0.0, 0.0, 0.0, 0.0, 5.0, 5.0, 5.0, 5.0, 5.0, 9.0, 9.0, 9.0, 9.0, 9.0))
+  mlpPredictions <- collect(select(predict(model, mlpTestDF), "prediction"))
+  expect_equal(head(mlpPredictions$prediction, 12), c(1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1))
+
+  model <- spark.mlp(df, layers = c(4, 3), maxIter = 2)
+  mlpPredictions <- collect(select(predict(model, mlpTestDF), "prediction"))
+  expect_equal(head(mlpPredictions$prediction, 12), c(1, 1, 1, 1, 0, 1, 0, 2, 1, 0, 0, 1))
 })
 
 test_that("spark.naiveBayes", {
@@ -481,6 +496,16 @@ test_that("spark.naiveBayes", {
     expect_error(m <- e1071::naiveBayes(Survived ~ ., data = t1), NA)
     expect_equal(as.character(predict(m, t1[1, ])), "Yes")
   }
+
+  # Test numeric response variable
+  t1$NumericSurvived <- ifelse(t1$Survived == "No", 0, 1)
+  t2 <- t1[-4]
+  df <- suppressWarnings(createDataFrame(t2))
+  m <- spark.naiveBayes(df, NumericSurvived ~ ., smoothing = 0.0)
+  s <- summary(m)
+  expect_equal(as.double(s$apriori[1, 1]), 0.5833333, tolerance = 1e-6)
+  expect_equal(sum(s$apriori), 1)
+  expect_equal(as.double(s$tables[1, "Age_Adult"]), 0.5714286, tolerance = 1e-6)
 })
 
 test_that("spark.survreg", {
